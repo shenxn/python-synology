@@ -9,6 +9,7 @@ class SynoSurveillanceStation(object):
     """An implementation of a Synology SurveillanceStation."""
 
     API_KEY = "SYNO.SurveillanceStation.*"
+    INFO_API_KEY = "SYNO.SurveillanceStation.Info"
     CAMERA_API_KEY = "SYNO.SurveillanceStation.Camera"
     CAMERA_EVENT_API_KEY = "SYNO.SurveillanceStation.Camera.Event"
     HOME_MODE_API_KEY = "SYNO.SurveillanceStation.HomeMode"
@@ -21,12 +22,21 @@ class SynoSurveillanceStation(object):
 
     def update(self):
         """Update cameras and motion settings with latest from API."""
-        response = self._dsm.get(self.CAMERA_API_KEY, "list")
-        for data in response["data"]["cameras"]:
-            if data["id"] in self._cameras_by_id:
-                self._cameras_by_id[data["id"]].update(data)
+        list_data = self._dsm.get(self.CAMERA_API_KEY, "List")["data"]
+        cameras_data = self._dsm.get(
+            self.CAMERA_API_KEY,
+            "GetInfo",
+            {
+                "cameraIds": ",".join(
+                    str(cam["id"]) for cam in list_data["cameras"]
+                )
+            },
+        )["data"]
+        for camera_data in cameras_data["cameras"]:
+            if camera_data["id"] in self._cameras_by_id:
+                self._cameras_by_id[camera_data["id"]].update(camera_data)
             else:
-                self._cameras_by_id[data["id"]] = SynoCamera(data)
+                self._cameras_by_id[camera_data["id"]] = SynoCamera(camera_data)
 
         for camera_id in self._cameras_by_id:
             self._cameras_by_id[camera_id].update_motion_detection(
@@ -35,13 +45,18 @@ class SynoSurveillanceStation(object):
                 )["data"]
             )
 
-        live_view_response = self._dsm.get(
+        live_view_data = self._dsm.get(
             self.CAMERA_API_KEY,
-            "getLiveViewPath",
-            {"idList", self._cameras_by_id.keys()},
-        )
-        for live_view_data in live_view_response["data"]:
+            "GetLiveViewPath",
+            {"idList": ",".join(str(k) for k in self._cameras_by_id)},
+        )["data"]
+        for live_view_data in live_view_data:
             self._cameras_by_id[live_view_data["id"]].live_view.update(live_view_data)
+
+    # Global
+    def get_info(self):
+        """Return general informations about the Surveillance Station instance."""
+        return self._dsm.get(self.INFO_API_KEY, "GetInfo")
 
     # Camera
     def get_all_cameras(self):
@@ -61,18 +76,18 @@ class SynoSurveillanceStation(object):
     def get_camera_image(self, camera_id):
         """Return bytes of camera image for camera matching camera_id."""
         return self._dsm.get(
-            self.CAMERA_API_KEY, "getSnapshot", {"cameraId": camera_id}
+            self.CAMERA_API_KEY, "GetSnapshot", {"id": camera_id, "cameraId": camera_id}
         )
 
     def enable_camera(self, camera_id):
         """Enable camera(s) - multiple ID or single ex 1 or 1,2,3."""
-        return self._dsm.get(self.CAMERA_API_KEY, "enable", {"idList": camera_id})[
+        return self._dsm.get(self.CAMERA_API_KEY, "Enable", {"idList": camera_id})[
             "success"
         ]
 
     def disable_camera(self, camera_id):
         """Disable camera(s) - multiple ID or single ex 1 or 1,2,3."""
-        return self._dsm.get(self.CAMERA_API_KEY, "disable", {"idList": camera_id})[
+        return self._dsm.get(self.CAMERA_API_KEY, "Disable", {"idList": camera_id})[
             "success"
         ]
 
@@ -80,14 +95,19 @@ class SynoSurveillanceStation(object):
     def capture_camera_image(self, camera_id, save=True):
         """Capture a snapshot for camera matching camera_id."""
         return self._dsm.get(
-            self.SNAPSHOT_API_KEY, "takeSnapshot", {"camId": camera_id, "blSave": save},
+            self.SNAPSHOT_API_KEY,
+            "TakeSnapshot",
+            {
+                "camId": camera_id,
+                "blSave": int(save),  # API requires an integer instead of a boolean
+            },
         )
 
     def download_snapshot(self, snapshot_id, snapshot_size):
         """Download snapshot image binary for a givent snapshot_id (snapshot_size: SNAPSHOT_SIZE_ICON | SNAPSHOT_SIZE_FULL)."""
         return self._dsm.get(
             self.SNAPSHOT_API_KEY,
-            "loadSnapshot",
+            "LoadSnapshot",
             {"id": snapshot_id, "imgSize": snapshot_size},
         )
 
@@ -115,8 +135,8 @@ class SynoSurveillanceStation(object):
     # Home mode
     def get_home_mode_status(self):
         """Get the state of Home Mode"""
-        return self._dsm.get(self.HOME_MODE_API_KEY, "getinfo")["data"]["on"]
+        return self._dsm.get(self.HOME_MODE_API_KEY, "GetInfo")["data"]["on"]
 
     def set_home_mode(self, state):
         """Set the state of Home Mode (state: bool)"""
-        return self._dsm.get(self.HOME_MODE_API_KEY, "switch", {"on": state})["success"]
+        return self._dsm.get(self.HOME_MODE_API_KEY, "Switch", {"on": state})["success"]
